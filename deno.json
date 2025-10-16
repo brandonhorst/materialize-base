@@ -1,0 +1,15 @@
+{
+  "tasks": {
+    "check": "deno fmt && deno lint && deno check",
+    "test": "deno test --allow-run --allow-read",
+    "coverage": "deno test --allow-run --allow-read --coverage",
+    "demo": "deno run --allow-read module.ts test-vault/simple.base --vault-path=test-vault"
+  },
+  "imports": {
+    "@std/assert": "jsr:@std/assert@^1.0.15",
+    "@std/cli": "jsr:@std/cli@^1.0.23",
+    "@std/path": "jsr:@std/path@^1.1.2",
+    "@std/testing": "jsr:@std/testing@^1.0.16",
+    "@std/yaml": "jsr:@std/yaml@^1.0.10"
+  }
+}

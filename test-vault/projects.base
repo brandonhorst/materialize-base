@@ -1,0 +1,54 @@
+filters:
+  and:
+    - 'file.inFolder("projects")'
+    - or:
+        - 'file.hasTag("project")'
+        - 'file.hasTag("research")'
+    - not:
+        - 'file.inFolder("templates")'
+formulas:
+  normalizedStatus: (note.status ?? "").toLowerCase()
+  totalEffort: (note.effort ?? 0) + (note.researchHours ?? 0)
+  highEffort: formula.totalEffort >= 6
+  hasMeetingLink: file.hasLink("meetings/weekly-sync.md") || file.hasLink("meetings/weekly-sync")
+  ownerUpper: (note.owner ?? "").toUpperCase()
+properties:
+  note.title:
+    displayName: Project
+  note.status:
+    displayName: Status
+  formula.normalizedStatus:
+    displayName: Normalized Status
+  formula.totalEffort:
+    displayName: Total Effort
+  formula.highEffort:
+    displayName: High Effort?
+  formula.hasMeetingLink:
+    displayName: Linked to Sync?
+  formula.ownerUpper:
+    displayName: Owner (Upper)
+views:
+  - type: table
+    name: Project Summary
+    filters:
+      and:
+        - 'note.status !== "archived"'
+    order:
+      - note.title
+      - formula.normalizedStatus
+      - formula.totalEffort
+      - formula.highEffort
+      - formula.hasMeetingLink
+  - type: table
+    name: Archived Projects
+    limit: 1
+    filters:
+      and:
+        - 'note.status === "archived"'
+    order:
+      - note.title
+      - note.status
+      - formula.totalEffort
+      - formula.ownerUpper
+  - type: table
+    name: Property Ordered Projects

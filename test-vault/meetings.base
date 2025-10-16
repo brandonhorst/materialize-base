@@ -1,0 +1,26 @@
+filters:
+  and:
+    - 'file.inFolder("meetings")'
+formulas:
+  attendanceCount: "Array.isArray(note.participants) ? note.participants.length : 0"
+  facilitatorUpper: "(note.facilitator ?? '').toUpperCase()"
+  isPlanned: "note.status === 'planned'"
+  titleLink: "file.asLink(note.title)"
+views:
+  - type: table
+    name: Upcoming Meetings
+    order:
+      - note.title
+      - formula.attendanceCount
+      - formula.facilitatorUpper
+      - formula.titleLink
+    filters:
+      and:
+        - 'formula.isPlanned'
+  - type: table
+    name: Meeting Diagnostics
+    filters:
+      or:
+        - 'formula.attendanceCount >= 3'
+        - not:
+            - 'formula.isPlanned'

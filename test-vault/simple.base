@@ -1,0 +1,20 @@
+filters:
+  or:
+    - file.hasTag("project")
+    - file.hasTag("brainstorming")
+formulas:
+  uppercase_title: note.title.toUpperCase()
+properties:
+  note.title:
+    displayName: Title
+  note.tags:
+    displayName: Tags
+  formula.uppercase_title:
+    displayName: Shouting
+views:
+  - type: table
+    name: Tagged notes
+    order:
+      - note.title
+      - file.name
+      - formula.uppercase_title

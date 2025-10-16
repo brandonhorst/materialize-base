@@ -1,0 +1,7 @@
+filters:
+  and: 'note.status === "active"'
+views:
+  - type: table
+    name: Invalid Filter View
+    order:
+      - note.title

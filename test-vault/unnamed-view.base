@@ -1,0 +1,7 @@
+filters:
+  and:
+    - 'file.inFolder("projects")'
+views:
+  - type: table
+    order:
+      - note.title

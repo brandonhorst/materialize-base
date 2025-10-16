@@ -1,0 +1,6 @@
+filters:
+  and:
+    - 'file.inFolder("projects")'
+properties:
+  note.title:
+    displayName: Title
