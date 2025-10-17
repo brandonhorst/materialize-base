@@ -76,7 +76,6 @@ async function main() {
       : "Untitled view";
 
   const vaultFiles = await walkVault(vaultPath);
-  console.log(vaultFiles);
 
   const result = await materialize(baseData, selectedViewName, vaultFiles);
   const markdownTable = renderMarkdownTable(result);

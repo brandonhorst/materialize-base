@@ -1,0 +1,66 @@
+filters:
+  and:
+    - 'file.hasTag("daily")'
+formulas:
+  dateParsed: date("2024-06-15 10:30:00")
+  todayValue: today()
+  nowValue: now()
+  durationValue: duration("2h 30m")
+  numberValue: number("42.5")
+  maxValue: max(1, 5, 3)
+  minValue: min(1, 5, 3)
+  conditionalResult: if(note.mood === "reflective", "yes", "no")
+  filePath: file("meetings/weekly-sync.md")
+  linkValue: link("project-overview.md", "Overview Link")
+  imageMarkdown: image("https://example.com/image.png")
+  iconPlaceholder: icon("arrow-right")
+  tagsList: list(note.tags ?? [])
+  moodList: list(note.mood)
+properties:
+  formula.dateParsed:
+    displayName: Date Parsed
+  formula.todayValue:
+    displayName: Today
+  formula.nowValue:
+    displayName: Now
+  formula.durationValue:
+    displayName: Duration (ms)
+  formula.numberValue:
+    displayName: Number
+  formula.maxValue:
+    displayName: Max
+  formula.minValue:
+    displayName: Min
+  formula.conditionalResult:
+    displayName: If Result
+  formula.filePath:
+    displayName: File Path
+  formula.linkValue:
+    displayName: Link Label
+  formula.imageMarkdown:
+    displayName: Image Markdown
+  formula.iconPlaceholder:
+    displayName: Icon
+  formula.tagsList:
+    displayName: Tags List
+  formula.moodList:
+    displayName: Mood List
+views:
+  - type: table
+    name: Global Functions Demo
+    limit: 1
+    order:
+      - formula.dateParsed
+      - formula.todayValue
+      - formula.nowValue
+      - formula.durationValue
+      - formula.numberValue
+      - formula.maxValue
+      - formula.minValue
+      - formula.conditionalResult
+      - formula.filePath
+      - formula.linkValue
+      - formula.imageMarkdown
+      - formula.iconPlaceholder
+      - formula.tagsList
+      - formula.moodList

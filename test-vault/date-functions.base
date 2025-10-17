@@ -1,0 +1,12 @@
+filters:
+  and:
+    - 'file.hasTag("daily")'
+formulas:
+  todaysDate: today()
+properties:
+  formula.todaysDate:
+    displayName: "Today's Date"
+views:
+  - type: table
+    name: Today Overview
+    limit: 1

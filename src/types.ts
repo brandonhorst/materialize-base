@@ -177,3 +177,23 @@ export type ExpressionValue =
   | ExpressionFile
   | ExpressionObject
   | ExpressionRegularExpression;
+
+export interface ExpressionGlobals {
+  readonly today: () => Date;
+  readonly now: () => Date;
+  readonly date: (input: string | Date) => Date;
+  readonly duration: (value: string) => number;
+  readonly file: (path: unknown) => Record<string, unknown>;
+  readonly if: <T>(
+    condition: unknown,
+    trueResult: T,
+    falseResult?: T,
+  ) => T | null;
+  readonly image: (path: unknown) => string;
+  readonly icon: (name: string) => string;
+  readonly link: (path: unknown, display?: unknown) => Record<string, unknown>;
+  readonly list: (value: unknown) => ReadonlyArray<unknown>;
+  readonly max: (...values: ReadonlyArray<number>) => number;
+  readonly min: (...values: ReadonlyArray<number>) => number;
+  readonly number: (input: unknown) => number;
+}

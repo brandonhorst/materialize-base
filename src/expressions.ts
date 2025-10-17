@@ -1,8 +1,25 @@
+import jsep from "jsep";
+import type {
+  ArrayExpression as JsepArrayExpression,
+  BinaryExpression as JsepBinaryExpression,
+  CallExpression as JsepCallExpression,
+  Compound as JsepCompound,
+  ConditionalExpression as JsepConditionalExpression,
+  Expression as JsepExpression,
+  Identifier as JsepIdentifier,
+  Literal as JsepLiteral,
+  MemberExpression as JsepMemberExpression,
+  SequenceExpression as JsepSequenceExpression,
+  UnaryExpression as JsepUnaryExpression,
+} from "jsep";
+import regexPlugin from "@jsep-plugin/regex";
+
 import type { BaseFilter, BaseFormulaMap, VaultFile } from "./types.ts";
+import { createGlobalFunctionScope } from "./global-functions.ts";
+import { tryParseDuration } from "./duration.ts";
 
 type CompiledExpression = {
-  readonly argNames: string[];
-  readonly evaluator: (...args: unknown[]) => unknown;
+  readonly ast: JsepExpression;
 };
 
 export interface EvaluationState {
@@ -19,9 +36,143 @@ const RESERVED_IDENTIFIERS = new Set<string>([
   "super",
   "globalThis",
   "window",
+  // JavaScript keywords that collide with Obsidian function names.
+  "if",
 ]);
 
 const IDENTIFIER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+const IDENTIFIER_CHAR_PATTERN = /[A-Za-z0-9_$]/;
+
+const GLOBAL_FUNCTION_ALIASES: Record<string, string> = {
+  "if": "_if",
+  "file": "_fileFn",
+};
+
+jsep.plugins.register(regexPlugin);
+jsep.addLiteral("undefined", undefined);
+jsep.addLiteral("Infinity", Infinity);
+jsep.addLiteral("NaN", Number.NaN);
+try {
+  jsep.addBinaryOp("??", 2);
+} catch {
+  // Operator already registered.
+}
+
+function isIdentifierCharacter(char: string | undefined): boolean {
+  if (!char) return false;
+  return IDENTIFIER_CHAR_PATTERN.test(char);
+}
+
+function normalizeExpressionSource(expression: string): string {
+  let result = "";
+  let index = 0;
+  let inSingle = false;
+  let inDouble = false;
+  let inTemplate = false;
+  let escaping = false;
+
+  while (index < expression.length) {
+    const char = expression[index];
+
+    if (inSingle) {
+      result += char;
+      if (escaping) {
+        escaping = false;
+      } else if (char === "\\") {
+        escaping = true;
+      } else if (char === "'") {
+        inSingle = false;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (inDouble) {
+      result += char;
+      if (escaping) {
+        escaping = false;
+      } else if (char === "\\") {
+        escaping = true;
+      } else if (char === '"') {
+        inDouble = false;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (inTemplate) {
+      result += char;
+      if (escaping) {
+        escaping = false;
+      } else if (char === "\\") {
+        escaping = true;
+      } else if (char === "`") {
+        inTemplate = false;
+      }
+      index += 1;
+      continue;
+    }
+
+    if (char === "'") {
+      inSingle = true;
+      result += char;
+      index += 1;
+      continue;
+    }
+
+    if (char === '"') {
+      inDouble = true;
+      result += char;
+      index += 1;
+      continue;
+    }
+
+    if (char === "`") {
+      inTemplate = true;
+      result += char;
+      index += 1;
+      continue;
+    }
+
+    let replaced = false;
+
+    for (const [name, alias] of Object.entries(GLOBAL_FUNCTION_ALIASES)) {
+      if (!expression.startsWith(name, index)) continue;
+
+      const previousChar = expression[index - 1];
+      const nextChar = expression[index + name.length];
+
+      if (
+        isIdentifierCharacter(previousChar) ||
+        previousChar === "." ||
+        isIdentifierCharacter(nextChar)
+      ) {
+        continue;
+      }
+
+      let probe = index + name.length;
+      while (probe < expression.length && /\s/.test(expression[probe])) {
+        probe += 1;
+      }
+
+      if (expression[probe] === "(") {
+        result += alias;
+        index += name.length;
+        replaced = true;
+        break;
+      }
+    }
+
+    if (replaced) {
+      continue;
+    }
+
+    result += char;
+    index += 1;
+  }
+
+  return result;
+}
 
 function isValidIdentifier(identifier: string): boolean {
   return (
@@ -30,24 +181,466 @@ function isValidIdentifier(identifier: string): boolean {
   );
 }
 
+type ScopeValues = Record<string, unknown>;
+type JsValue =
+  | number
+  | string
+  | boolean
+  | bigint
+  | symbol
+  | null
+  | undefined
+  | object;
+
+const BUILTIN_SCOPE_ENTRIES: Record<string, unknown> = {
+  Array,
+  Boolean,
+  Date,
+  JSON,
+  Map,
+  Math,
+  Number,
+  Object,
+  Reflect,
+  RegExp,
+  Set,
+  String,
+  Symbol,
+  WeakMap,
+  WeakSet,
+  BigInt,
+};
+
+function hasScopeIdentifier(scope: ScopeValues, name: string): boolean {
+  return Object.prototype.hasOwnProperty.call(scope, name);
+}
+
+function toPropertyKey(value: unknown): PropertyKey {
+  if (typeof value === "string" || typeof value === "symbol") {
+    return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  return String(value);
+}
+
+function ensureTargetObject(value: unknown): object | Function {
+  if (value === null || value === undefined) {
+    throw new TypeError(`Cannot read properties of ${value}`);
+  }
+  if (typeof value === "object" || typeof value === "function") {
+    return value as object | Function;
+  }
+  return Object(value);
+}
+
+function toNumeric(value: unknown): number {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  return Number(value);
+}
+
+function toNullishAwareDuration(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "bigint") {
+    return Number(value);
+  }
+  if (typeof value === "string") {
+    const parsed = tryParseDuration(value);
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function nativeAdd(left: unknown, right: unknown): unknown {
+  // deno-lint-ignore no-explicit-any
+  return (left as any) + (right as any);
+}
+
+function nativeCompare(
+  operator: ">" | "<" | ">=" | "<=",
+  left: unknown,
+  right: unknown,
+): boolean {
+  // deno-lint-ignore no-explicit-any
+  const lhs = left as any;
+  // deno-lint-ignore no-explicit-any
+  const rhs = right as any;
+  switch (operator) {
+    case ">":
+      return lhs > rhs;
+    case "<":
+      return lhs < rhs;
+    case ">=":
+      return lhs >= rhs;
+    case "<=":
+      return lhs <= rhs;
+  }
+}
+
+function applyAddition(left: unknown, right: unknown): unknown {
+  if (left instanceof Date) {
+    const duration = toNullishAwareDuration(right);
+    if (duration !== null) {
+      return new Date(left.getTime() + duration);
+    }
+  }
+
+  if (right instanceof Date) {
+    const duration = toNullishAwareDuration(left);
+    if (duration !== null) {
+      return new Date(right.getTime() + duration);
+    }
+  }
+
+  return nativeAdd(left, right);
+}
+
+function applySubtraction(left: unknown, right: unknown): unknown {
+  if (left instanceof Date && right instanceof Date) {
+    return left.getTime() - right.getTime();
+  }
+
+  if (left instanceof Date) {
+    const duration = toNullishAwareDuration(right);
+    if (duration !== null) {
+      return new Date(left.getTime() - duration);
+    }
+  }
+
+  return toNumeric(left) - toNumeric(right);
+}
+
+function createRegExpLiteral(literal: JsepLiteral): RegExp {
+  const regexData = (literal as JsepLiteral & {
+    regex?: { pattern: string; flags?: string };
+  }).regex;
+  if (!regexData) {
+    throw new Error("Expected regex metadata on literal.");
+  }
+  return new RegExp(regexData.pattern, regexData.flags);
+}
+
+function evaluateLiteral(node: JsepLiteral): unknown {
+  const regexData = (node as JsepLiteral & {
+    regex?: { pattern: string; flags?: string };
+  }).regex;
+  if (regexData) {
+    return createRegExpLiteral(node);
+  }
+  return node.value;
+}
+
+interface ResolvedMember {
+  readonly objectValue: unknown;
+  readonly propertyKey: PropertyKey;
+  readonly value: unknown;
+}
+
+function resolveMemberExpression(
+  node: JsepMemberExpression,
+  scope: ScopeValues,
+): ResolvedMember {
+  const objectValue = evaluateExpressionNode(node.object, scope);
+  const propertyValue = node.computed
+    ? evaluateExpressionNode(node.property, scope)
+    : (node.property as JsepIdentifier).name;
+  const propertyKey = node.computed
+    ? toPropertyKey(propertyValue)
+    : (node.property as JsepIdentifier).name;
+
+  const target = ensureTargetObject(objectValue);
+  const value = Reflect.get(
+    target as Record<PropertyKey, unknown>,
+    propertyKey,
+  );
+
+  return { objectValue, propertyKey, value };
+}
+
+function evaluateIdentifier(
+  node: JsepIdentifier,
+  scope: ScopeValues,
+): unknown {
+  if (hasScopeIdentifier(scope, node.name)) {
+    return scope[node.name];
+  }
+  throw new ReferenceError(`"${node.name}" is not defined`);
+}
+
+function evaluateUnaryExpression(
+  node: JsepUnaryExpression,
+  scope: ScopeValues,
+): unknown {
+  if (node.operator === "typeof" && node.argument.type === "Identifier") {
+    const identifier = node.argument as JsepIdentifier;
+    if (!hasScopeIdentifier(scope, identifier.name)) {
+      return "undefined";
+    }
+  }
+
+  const argument = evaluateExpressionNode(node.argument, scope);
+
+  switch (node.operator) {
+    case "!":
+      return !argument;
+    case "+":
+      return +toNumeric(argument);
+    case "-":
+      return -toNumeric(argument);
+    case "~":
+      return ~Number(argument);
+    case "typeof":
+      return typeof argument;
+    case "void":
+      return undefined;
+    default:
+      throw new Error(`Unsupported unary operator "${node.operator}".`);
+  }
+}
+
+function evaluateBinaryExpression(
+  node: JsepBinaryExpression,
+  scope: ScopeValues,
+): unknown {
+  if (node.operator === "&&") {
+    const left = evaluateExpressionNode(node.left, scope);
+    if (!left) {
+      return left;
+    }
+    return evaluateExpressionNode(node.right, scope);
+  }
+
+  if (node.operator === "||") {
+    const left = evaluateExpressionNode(node.left, scope);
+    if (left) {
+      return left;
+    }
+    return evaluateExpressionNode(node.right, scope);
+  }
+
+  if (node.operator === "??") {
+    const left = evaluateExpressionNode(node.left, scope);
+    return evaluateNullishCoalescing(
+      left,
+      () => evaluateExpressionNode(node.right, scope),
+    );
+  }
+
+  const left = evaluateExpressionNode(node.left, scope);
+  const right = evaluateExpressionNode(node.right, scope);
+
+  switch (node.operator) {
+    case "+":
+      return applyAddition(left, right);
+    case "-":
+      return applySubtraction(left, right);
+    case "*":
+      return toNumeric(left) * toNumeric(right);
+    case "/":
+      return toNumeric(left) / toNumeric(right);
+    case "%":
+      return toNumeric(left) % toNumeric(right);
+    case "**":
+      return toNumeric(left) ** toNumeric(right);
+    case "==":
+      return (left as JsValue) == (right as JsValue);
+    case "!=":
+      return (left as JsValue) != (right as JsValue);
+    case "===":
+      return left === right;
+    case "!==":
+      return left !== right;
+    case ">":
+      return nativeCompare(">", left, right);
+    case "<":
+      return nativeCompare("<", left, right);
+    case ">=":
+      return nativeCompare(">=", left, right);
+    case "<=":
+      return nativeCompare("<=", left, right);
+    case "instanceof":
+      if (typeof right !== "function") {
+        throw new TypeError("Right-hand side of instanceof must be callable.");
+      }
+      return (left as object) instanceof (right as Function);
+    case "in": {
+      if (
+        (typeof right !== "object" || right === null) &&
+        typeof right !== "function"
+      ) {
+        throw new TypeError(
+          "Right-hand side of 'in' should be an object or function.",
+        );
+      }
+      const key = toPropertyKey(left);
+      return key in (right as Record<PropertyKey, unknown>);
+    }
+    default:
+      throw new Error(`Unsupported binary operator "${node.operator}".`);
+  }
+}
+
+function evaluateNullishCoalescing(
+  left: unknown,
+  getRight: () => unknown,
+): unknown {
+  if (left !== null && left !== undefined) {
+    return left;
+  }
+  return getRight();
+}
+
+function evaluateConditionalExpression(
+  node: JsepConditionalExpression,
+  scope: ScopeValues,
+): unknown {
+  const test = evaluateExpressionNode(node.test, scope);
+  if (test) {
+    return evaluateExpressionNode(node.consequent, scope);
+  }
+  return evaluateExpressionNode(node.alternate, scope);
+}
+
+function evaluateCallExpression(
+  node: JsepCallExpression,
+  scope: ScopeValues,
+): unknown {
+  let callable: unknown;
+  let thisValue: unknown = undefined;
+
+  if (node.callee.type === "MemberExpression") {
+    const resolved = resolveMemberExpression(
+      node.callee as JsepMemberExpression,
+      scope,
+    );
+    callable = resolved.value;
+    thisValue = resolved.objectValue;
+  } else {
+    callable = evaluateExpressionNode(node.callee, scope);
+  }
+
+  if (typeof callable !== "function") {
+    throw new TypeError("Attempted to call a non-function value.");
+  }
+
+  const args = node.arguments.map((arg) => evaluateExpressionNode(arg, scope));
+  return (callable as (...args: unknown[]) => unknown).apply(thisValue, args);
+}
+
+function evaluateMemberAccess(
+  node: JsepMemberExpression,
+  scope: ScopeValues,
+): unknown {
+  return resolveMemberExpression(node, scope).value;
+}
+
+function evaluateArrayExpression(
+  node: JsepArrayExpression,
+  scope: ScopeValues,
+): unknown[] {
+  const result: unknown[] = [];
+  for (const element of node.elements) {
+    if (element === null) {
+      result.push(undefined);
+      continue;
+    }
+    result.push(evaluateExpressionNode(element, scope));
+  }
+  return result;
+}
+
+function evaluateSequenceExpression(
+  node: JsepSequenceExpression,
+  scope: ScopeValues,
+): unknown {
+  let value: unknown = undefined;
+  for (const expression of node.expressions) {
+    value = evaluateExpressionNode(expression, scope);
+  }
+  return value;
+}
+
+function evaluateCompoundExpression(
+  node: JsepCompound,
+  scope: ScopeValues,
+): unknown {
+  let value: unknown = undefined;
+  for (const entry of node.body) {
+    value = evaluateExpressionNode(entry, scope);
+  }
+  return value;
+}
+
+function evaluateExpressionNode(
+  node: JsepExpression,
+  scope: ScopeValues,
+): unknown {
+  switch (node.type) {
+    case "ArrayExpression":
+      return evaluateArrayExpression(node as JsepArrayExpression, scope);
+    case "BinaryExpression":
+      return evaluateBinaryExpression(node as JsepBinaryExpression, scope);
+    case "CallExpression":
+      return evaluateCallExpression(node as JsepCallExpression, scope);
+    case "Compound":
+      return evaluateCompoundExpression(node as JsepCompound, scope);
+    case "ConditionalExpression":
+      return evaluateConditionalExpression(
+        node as JsepConditionalExpression,
+        scope,
+      );
+    case "Identifier":
+      return evaluateIdentifier(node as JsepIdentifier, scope);
+    case "Literal":
+      return evaluateLiteral(node as JsepLiteral);
+    case "MemberExpression":
+      return evaluateMemberAccess(node as JsepMemberExpression, scope);
+    case "SequenceExpression":
+      return evaluateSequenceExpression(
+        node as JsepSequenceExpression,
+        scope,
+      );
+    case "ThisExpression":
+      if (hasScopeIdentifier(scope, "this")) {
+        return scope["this"];
+      }
+      return undefined;
+    case "UnaryExpression":
+      return evaluateUnaryExpression(node as JsepUnaryExpression, scope);
+    default:
+      throw new Error(`Unsupported expression node "${node.type}".`);
+  }
+}
+
 function compileExpression(
   expression: string,
-  scope: Record<string, unknown>,
 ): CompiledExpression {
-  const argNames = Object.keys(scope);
-  const evaluator = new Function(
-    ...argNames,
-    `"use strict"; return (${expression});`,
-  ) as (...args: unknown[]) => unknown;
-  return { argNames, evaluator };
+  try {
+    const ast = jsep(expression);
+    return { ast };
+  } catch (error) {
+    throw new Error(
+      `Failed to parse expression "${expression}"`,
+      { cause: error },
+    );
+  }
 }
 
 function evaluateCompiled(
   compiled: CompiledExpression,
-  scope: Record<string, unknown>,
+  scope: ScopeValues,
 ): unknown {
-  const args = compiled.argNames.map((name) => scope[name]);
-  return compiled.evaluator(...args);
+  return evaluateExpressionNode(compiled.ast, scope);
 }
 
 function normalizeListValue(value: unknown): unknown[] {
@@ -200,20 +793,43 @@ export function buildEvaluationState(
   const properties = file.properties ?? {};
   const frontmatter = file.frontmatter ?? {};
 
-  const scope: Record<string, unknown> = {
-    file: createFileExpression(file),
-    frontmatter,
-    metadata,
-    note,
-    properties,
-  };
+  const scope: Record<string, unknown> = Object.create(null);
+  scope.file = createFileExpression(file);
+  scope.frontmatter = frontmatter;
+  scope.metadata = metadata;
+  scope.note = note;
+  scope.properties = properties;
+
+  const globalFunctions = createGlobalFunctionScope();
+  const globalFunctionKeys = new Set(Object.keys(globalFunctions));
 
   for (const [key, value] of Object.entries(note)) {
     if (
       !Object.prototype.hasOwnProperty.call(scope, key) &&
       typeof key === "string" &&
-      isValidIdentifier(key)
+      isValidIdentifier(key) &&
+      !globalFunctionKeys.has(key)
     ) {
+      scope[key] = value;
+    }
+  }
+
+  for (const [key, value] of Object.entries(globalFunctions)) {
+    if (!Object.prototype.hasOwnProperty.call(scope, key)) {
+      scope[key] = value;
+    }
+
+    const alias = GLOBAL_FUNCTION_ALIASES[key];
+    if (
+      alias &&
+      !Object.prototype.hasOwnProperty.call(scope, alias)
+    ) {
+      scope[alias] = value;
+    }
+  }
+
+  for (const [key, value] of Object.entries(BUILTIN_SCOPE_ENTRIES)) {
+    if (!Object.prototype.hasOwnProperty.call(scope, key)) {
       scope[key] = value;
     }
   }
@@ -229,10 +845,12 @@ export function buildEvaluationState(
       return undefined;
     }
 
-    let compiled = compiledExpressions.get(trimmed);
+    const normalized = normalizeExpressionSource(trimmed);
+
+    let compiled = compiledExpressions.get(normalized);
     if (!compiled) {
-      compiled = compileExpression(trimmed, scope);
-      compiledExpressions.set(trimmed, compiled);
+      compiled = compileExpression(normalized);
+      compiledExpressions.set(normalized, compiled);
     }
 
     try {

@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path/join";
 import { fromFileUrl } from "@std/path/from-file-url";
 
@@ -80,6 +80,13 @@ function extractTableLines(stdout: string, viewName: string): string[] {
   }
 
   return lines;
+}
+
+function parseTableRow(line: string): string[] {
+  return line
+    .split("|")
+    .slice(1, -1)
+    .map((cell) => cell.trim());
 }
 
 interface TableOptions {
@@ -263,6 +270,78 @@ Deno.test("CLI renders placeholder table when no columns are defined", async () 
   assertEquals(table, expected);
 });
 
+Deno.test("CLI evaluates today() global function", async () => {
+  const { code, stdout, stderr } = await runCli(
+    "test-vault/date-functions.base",
+  );
+
+  assertEquals(code, 0, `CLI exited with ${code}. stderr:\n${stderr}`);
+  assertEquals(stderr, "", "Expected no stderr output from CLI run.");
+
+  const table = extractTableLines(stdout, "Today Overview");
+  assertEquals(table[0], "| Today's Date |");
+  assertEquals(table[1], "| --- |");
+  assertEquals(table.length, 3, "Expected one result row for today().");
+
+  const valueRow = table[2];
+  assertMatch(
+    valueRow,
+    /^\|\s\d{4}-\d{2}-\d{2}T/,
+    "today() should return an ISO-like date string.",
+  );
+});
+
+Deno.test("CLI evaluates all documented global functions", async () => {
+  const { code, stdout, stderr } = await runCli(
+    "test-vault/global-functions.base",
+  );
+
+  assertEquals(code, 0, `CLI exited with ${code}. stderr:\n${stderr}`);
+  assertEquals(stderr, "", "Expected no stderr output from CLI run.");
+
+  const table = extractTableLines(stdout, "Global Functions Demo");
+  const expectedHeader =
+    "| Date Parsed | Today | Now | Duration (ms) | Number | Max | Min | If Result | File Path | Link Label | Image Markdown | Icon | Tags List | Mood List |";
+  const expectedSeparator =
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |";
+
+  assertEquals(table[0], expectedHeader);
+  assertEquals(table[1], expectedSeparator);
+  assertEquals(
+    table.length,
+    3,
+    "Expected a single data row for global functions.",
+  );
+
+  const rowCells = parseTableRow(table[2]);
+  assertMatch(
+    rowCells[0],
+    /^\d{4}-\d{2}-\d{2}T/,
+    "date() should yield an ISO timestamp.",
+  );
+  assertMatch(
+    rowCells[1],
+    /^\d{4}-\d{2}-\d{2}T\d{2}:00:00/,
+    "today() should be start-of-day ISO (hours may vary by timezone).",
+  );
+  assertMatch(
+    rowCells[2],
+    /^\d{4}-\d{2}-\d{2}T/,
+    "now() should yield an ISO timestamp.",
+  );
+  assertEquals(rowCells[3], "9000000");
+  assertEquals(rowCells[4], "42.5");
+  assertEquals(rowCells[5], "5");
+  assertEquals(rowCells[6], "1");
+  assertEquals(rowCells[7], "yes");
+  assertEquals(rowCells[8], "meetings/weekly-sync.md");
+  assertEquals(rowCells[9], "Overview Link");
+  assertEquals(rowCells[10], "![](https://example.com/image.png)");
+  assertEquals(rowCells[11], "icon(arrow-right)");
+  assertEquals(rowCells[12], "daily, journal");
+  assertEquals(rowCells[13], "reflective");
+});
+
 Deno.test("CLI fails when base file cannot be read", async () => {
   const basePath = "test-vault/missing.base";
   const { code, stderr } = await runCli(basePath);
@@ -271,6 +350,28 @@ Deno.test("CLI fails when base file cannot be read", async () => {
   assertStringIncludes(
     stderr,
     `Unable to read base file at ${basePath}`,
+  );
+});
+
+Deno.test("CLI fails when base file contains invalid YAML", async () => {
+  const { code, stdout, stderr } = await runCli(
+    "test-vault/invalid-yaml.base",
+  );
+
+  assertEquals(code, 1, "Expected CLI to exit with failure.");
+  assertEquals(stdout, "", "Expected no stdout output on failure.");
+  assertStringIncludes(stderr, "Failed to parse base file as YAML.");
+});
+
+Deno.test("CLI fails when base path points to a non-base file", async () => {
+  const basePath = "test-vault/daily-note.md";
+  const { code, stdout, stderr } = await runCli(basePath);
+
+  assertEquals(code, 1, "Expected CLI to exit with failure.");
+  assertEquals(stdout, "", "Expected no stdout output on failure.");
+  assertStringIncludes(
+    stderr,
+    `Failed to parse base file as YAML.`,
   );
 });
 
