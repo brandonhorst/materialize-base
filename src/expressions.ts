@@ -52,12 +52,6 @@ jsep.plugins.register(regexPlugin);
 jsep.addLiteral("undefined", undefined);
 jsep.addLiteral("Infinity", Infinity);
 jsep.addLiteral("NaN", Number.NaN);
-try {
-  jsep.addBinaryOp("??", 2);
-} catch {
-  // Operator already registered.
-}
-
 function isIdentifierCharacter(char: string | undefined): boolean {
   if (!char) return false;
   return IDENTIFIER_CHAR_PATTERN.test(char);
@@ -211,6 +205,38 @@ const BUILTIN_SCOPE_ENTRIES: Record<string, unknown> = {
   BigInt,
 };
 
+function ensureRegExpMatchesMethod(): void {
+  const prototype = RegExp.prototype as RegExp & {
+    matches?: (value: unknown) => boolean;
+  };
+
+  if (typeof prototype.matches === "function") {
+    return;
+  }
+
+  Object.defineProperty(prototype, "matches", {
+    configurable: true,
+    writable: true,
+    value(this: RegExp, value: unknown): boolean {
+      if (value === null || value === undefined) {
+        return false;
+      }
+
+      const input = typeof value === "string" ? value : String(value);
+      const previousIndex = this.lastIndex;
+      try {
+        return RegExp.prototype.test.call(this, input);
+      } finally {
+        if (this.global || this.sticky) {
+          this.lastIndex = previousIndex;
+        }
+      }
+    },
+  });
+}
+
+ensureRegExpMatchesMethod();
+
 function hasScopeIdentifier(scope: ScopeValues, name: string): boolean {
   return Object.prototype.hasOwnProperty.call(scope, name);
 }
@@ -225,12 +251,14 @@ function toPropertyKey(value: unknown): PropertyKey {
   return String(value);
 }
 
-function ensureTargetObject(value: unknown): object | Function {
+type ObjectOrCallable = object | ((...args: ReadonlyArray<unknown>) => unknown);
+
+function ensureTargetObject(value: unknown): ObjectOrCallable {
   if (value === null || value === undefined) {
     throw new TypeError(`Cannot read properties of ${value}`);
   }
   if (typeof value === "object" || typeof value === "function") {
-    return value as object | Function;
+    return value as ObjectOrCallable;
   }
   return Object(value);
 }
@@ -374,7 +402,7 @@ function evaluateIdentifier(
   if (hasScopeIdentifier(scope, node.name)) {
     return scope[node.name];
   }
-  throw new ReferenceError(`"${node.name}" is not defined`);
+  return undefined;
 }
 
 function evaluateUnaryExpression(
@@ -428,14 +456,6 @@ function evaluateBinaryExpression(
     return evaluateExpressionNode(node.right, scope);
   }
 
-  if (node.operator === "??") {
-    const left = evaluateExpressionNode(node.left, scope);
-    return evaluateNullishCoalescing(
-      left,
-      () => evaluateExpressionNode(node.right, scope),
-    );
-  }
-
   const left = evaluateExpressionNode(node.left, scope);
   const right = evaluateExpressionNode(node.right, scope);
 
@@ -450,16 +470,10 @@ function evaluateBinaryExpression(
       return toNumeric(left) / toNumeric(right);
     case "%":
       return toNumeric(left) % toNumeric(right);
-    case "**":
-      return toNumeric(left) ** toNumeric(right);
     case "==":
       return (left as JsValue) == (right as JsValue);
     case "!=":
       return (left as JsValue) != (right as JsValue);
-    case "===":
-      return left === right;
-    case "!==":
-      return left !== right;
     case ">":
       return nativeCompare(">", left, right);
     case "<":
@@ -468,36 +482,9 @@ function evaluateBinaryExpression(
       return nativeCompare(">=", left, right);
     case "<=":
       return nativeCompare("<=", left, right);
-    case "instanceof":
-      if (typeof right !== "function") {
-        throw new TypeError("Right-hand side of instanceof must be callable.");
-      }
-      return (left as object) instanceof (right as Function);
-    case "in": {
-      if (
-        (typeof right !== "object" || right === null) &&
-        typeof right !== "function"
-      ) {
-        throw new TypeError(
-          "Right-hand side of 'in' should be an object or function.",
-        );
-      }
-      const key = toPropertyKey(left);
-      return key in (right as Record<PropertyKey, unknown>);
-    }
     default:
       throw new Error(`Unsupported binary operator "${node.operator}".`);
   }
-}
-
-function evaluateNullishCoalescing(
-  left: unknown,
-  getRight: () => unknown,
-): unknown {
-  if (left !== null && left !== undefined) {
-    return left;
-  }
-  return getRight();
 }
 
 function evaluateConditionalExpression(

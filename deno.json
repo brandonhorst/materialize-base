@@ -3,8 +3,15 @@
     "check": "deno fmt && deno lint && deno check",
     "test": "deno test --allow-run --allow-read",
     "coverage": "deno test --allow-run --allow-read --coverage",
-    "demo": "deno run --allow-read module.ts test-vault/simple.base --vault-path=test-vault",
-    "compile": "deno compile --allow-read --output bin/materialize-base module.ts && chmod +x bin/materialize-base"
+    "demo": "deno run --allow-read module.ts test-vault/simple.base",
+    "compile:bin": "deno compile --allow-read --output out/bin/materialize-base module.ts",
+    "compile:skill": {
+      "command": "mkdir -p out/skill/scripts && cp vendor/SKILL.md out/skill && cp out/bin/materialize-base out/skill/scripts",
+      "dependencies": ["compile:bin"]
+    },
+    "compile": {
+      "dependencies": ["compile:skill", "compile:bin"]
+    }
   },
   "imports": {
     "@jsep-plugin/regex": "npm:@jsep-plugin/regex@^1.0.4",

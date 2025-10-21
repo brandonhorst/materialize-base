@@ -85,14 +85,6 @@ Deno.test("subtracts two dates to yield millisecond difference", () => {
   assertStrictEquals(result, 7 * 24 * 60 * 60 * 1000);
 });
 
-Deno.test("supports nullish coalescing in expressions", () => {
-  const result = evaluateExpression('note.status ?? "unset"', {
-    status: null,
-  });
-
-  assertStrictEquals(result, "unset");
-});
-
 Deno.test("retains access to standard library helpers", () => {
   const result = evaluateExpression("Array.isArray(note.items)", {
     items: ["a", "b"],
@@ -102,9 +94,15 @@ Deno.test("retains access to standard library helpers", () => {
 });
 
 Deno.test("invokes methods with the correct this context", () => {
-  const result = evaluateExpression('(note.owner ?? "").toLowerCase()', {
+  const result = evaluateExpression('(note.owner || "").toLowerCase()', {
     owner: "ALEX",
   });
 
   assertStrictEquals(result, "alex");
+});
+
+Deno.test("treats missing identifiers as undefined", () => {
+  const result = evaluateExpression('missing == "value"');
+
+  assertStrictEquals(result, false);
 });

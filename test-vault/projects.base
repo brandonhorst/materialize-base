@@ -7,11 +7,11 @@ filters:
     - not:
         - 'file.inFolder("templates")'
 formulas:
-  normalizedStatus: (note.status ?? "").toLowerCase()
-  totalEffort: (note.effort ?? 0) + (note.researchHours ?? 0)
+  normalizedStatus: (note.status || "").toLowerCase()
+  totalEffort: (note.effort || 0) + (note.researchHours || 0)
   highEffort: formula.totalEffort >= 6
   hasMeetingLink: file.hasLink("meetings/weekly-sync.md") || file.hasLink("meetings/weekly-sync")
-  ownerUpper: (note.owner ?? "").toUpperCase()
+  ownerUpper: (note.owner || "").toUpperCase()
 properties:
   note.title:
     displayName: Project
@@ -32,7 +32,7 @@ views:
     name: Project Summary
     filters:
       and:
-        - 'note.status !== "archived"'
+        - 'note.status != "archived"'
     order:
       - note.title
       - formula.normalizedStatus
@@ -44,7 +44,7 @@ views:
     limit: 1
     filters:
       and:
-        - 'note.status === "archived"'
+        - 'note.status == "archived"'
     order:
       - note.title
       - note.status

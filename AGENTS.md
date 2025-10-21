@@ -17,6 +17,15 @@ reference material is kept in `obsidian-base-docs/`; treat it as read-only
 documentation inputs. Configuration for tasks, formatting, and dependency
 imports is centralized in `deno.json`.
 
+## Documentation
+
+- `README.md` covers CLI usage, expected permissions, and the `--vault` and
+  `--view` flags for controlling output.
+- `vendor/SKILL.md` mirrors the CLI instructions for the Claude skill variant
+  and reiterates the optional `--vault` override.
+- `obsidian-base-docs/` stores scraped Obsidian Bases documentation for
+  reference only; do not modify.
+
 ## Build, Test, and Development Commands
 
 - `deno task check`: Run formatter, linter, and type-check to keep the codebase

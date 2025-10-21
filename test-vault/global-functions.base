@@ -9,12 +9,12 @@ formulas:
   numberValue: number("42.5")
   maxValue: max(1, 5, 3)
   minValue: min(1, 5, 3)
-  conditionalResult: if(note.mood === "reflective", "yes", "no")
+  conditionalResult: if(note.mood == "reflective", "yes", "no")
   filePath: file("meetings/weekly-sync.md")
   linkValue: link("project-overview.md", "Overview Link")
   imageMarkdown: image("https://example.com/image.png")
   iconPlaceholder: icon("arrow-right")
-  tagsList: list(note.tags ?? [])
+  tagsList: list(note.tags || [])
   moodList: list(note.mood)
 properties:
   formula.dateParsed:

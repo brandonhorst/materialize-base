@@ -1,0 +1,29 @@
+filters:
+  and:
+    - 'file.inFolder("projects")'
+formulas:
+  alphaTitle: '/alpha/i.matches(note.title || "")'
+  ownerSuffixIe: '/ie$/i.matches(note.owner || "")'
+properties:
+  note.title:
+    displayName: Project
+  formula.alphaTitle:
+    displayName: Matches "alpha" (case-insensitive)
+  formula.ownerSuffixIe:
+    displayName: Owner ends with "ie"
+views:
+  - type: table
+    name: Regex Filter
+    filters:
+      and:
+        - '/beta/i.matches(note.title || "")'
+    order:
+      - note.title
+      - formula.alphaTitle
+      - formula.ownerSuffixIe
+  - type: table
+    name: Regex Formulas
+    order:
+      - note.title
+      - formula.alphaTitle
+      - formula.ownerSuffixIe

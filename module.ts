@@ -3,6 +3,25 @@ import { parseBaseFile } from "./src/base-file.ts";
 import { materialize } from "./src/materialize.ts";
 import type { ObsidianBaseDefinition } from "./src/types.ts";
 import { walkVault } from "./src/vault.ts";
+import { getAncestorVaultPath } from "./src/vault-path.ts";
+
+export async function resolveVaultPath(
+  basePath: string,
+  explicitVaultPath: string | undefined,
+): Promise<string> {
+  if (explicitVaultPath) {
+    return explicitVaultPath;
+  }
+
+  const inferredVaultPath = await getAncestorVaultPath(basePath);
+  if (inferredVaultPath) {
+    return inferredVaultPath;
+  }
+
+  throw new Error(
+    "Unable to determine vault path. Provide --vault or place the base within an Obsidian vault (with a .obsidian directory).",
+  );
+}
 
 function fail(message: string, cause?: unknown): never {
   const details = cause instanceof Error ? `\n\n${cause.message}` : "";
@@ -27,10 +46,33 @@ function renderMarkdownTable(rows: string[][]): string {
   return [headerLine, separator, ...bodyLines].join("\n");
 }
 
+function printHelp(): void {
+  console.log(
+    [
+      "Usage: materialize-base <base-path> [--view=<view-name>] [--vault=<path>]",
+      "",
+      "Arguments:",
+      "  <base-path>              Required path to the Obsidian .base file to materialize.",
+      "",
+      "Options:",
+      "  --view=<view-name>       View name to render. Defaults to the first view in the base.",
+      "  --vault=<path>           Overrides the vault root. Defaults to the nearest ancestor",
+      "                           directory containing a .obsidian directory.",
+      "  --help                   Show this message.",
+    ].join("\n"),
+  );
+}
+
 async function main() {
   const argData = parseArgs(Deno.args, {
-    string: ["view", "vault-path"],
+    string: ["view", "vault"],
+    boolean: ["help"],
   });
+
+  if (argData.help) {
+    printHelp();
+    return;
+  }
 
   const [basePathArg] = argData._;
   if (!basePathArg || typeof basePathArg !== "string") {
@@ -38,10 +80,19 @@ async function main() {
   }
 
   const viewArg = typeof argData.view === "string" ? argData.view : undefined;
-  const vaultPath = typeof argData["vault-path"] === "string" &&
-      argData["vault-path"].length > 0
-    ? argData["vault-path"]
-    : Deno.cwd();
+  const explicitVaultPath = typeof argData.vault === "string" &&
+      argData.vault.length > 0
+    ? argData.vault
+    : undefined;
+  let vaultPath: string;
+  try {
+    vaultPath = await resolveVaultPath(basePathArg, explicitVaultPath);
+  } catch (error) {
+    const message = error instanceof Error
+      ? error.message
+      : "Failed to determine vault path.";
+    fail(message);
+  }
 
   let baseData: ObsidianBaseDefinition;
   try {

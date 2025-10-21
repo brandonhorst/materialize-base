@@ -1,0 +1,4 @@
+views:
+  - name: Outside Vault View
+    columns:
+      - property: note.title

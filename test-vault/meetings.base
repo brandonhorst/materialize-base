@@ -3,8 +3,8 @@ filters:
     - 'file.inFolder("meetings")'
 formulas:
   attendanceCount: "Array.isArray(note.participants) ? note.participants.length : 0"
-  facilitatorUpper: "(note.facilitator ?? '').toUpperCase()"
-  isPlanned: "note.status === 'planned'"
+  facilitatorUpper: '(note.facilitator || "").toUpperCase()'
+  isPlanned: "note.status == 'planned'"
   titleLink: "file.asLink(note.title)"
 views:
   - type: table

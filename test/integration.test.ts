@@ -5,11 +5,10 @@ import { fromFileUrl } from "@std/path/from-file-url";
 const decoder = new TextDecoder();
 const projectRoot = fromFileUrl(new URL("../", import.meta.url));
 const moduleEntryPath = join(projectRoot, "module.ts");
-const testVaultDir = join(projectRoot, "test-vault");
 
 interface RunCliOptions {
   readonly view?: string;
-  readonly omitVaultPath?: boolean;
+  readonly vaultPath?: string;
   readonly cwd?: string;
 }
 
@@ -32,8 +31,8 @@ async function runCli(
     args.push("--view", options.view);
   }
 
-  if (!options.omitVaultPath) {
-    args.push("--vault-path", "test-vault");
+  if (options.vaultPath) {
+    args.push("--vault", options.vaultPath);
   }
 
   return await runCliCommand(args, { cwd: options.cwd });
@@ -118,6 +117,20 @@ function assertTableEquals(
 
   assertEquals(actualRows, expectedRows, "Table rows mismatch.");
 }
+
+Deno.test("CLI prints usage information when --help is provided", async () => {
+  const { code, stdout, stderr } = await runCliCommand([
+    "run",
+    "--allow-read",
+    moduleEntryPath,
+    "--help",
+  ]);
+
+  assertEquals(code, 0, `CLI exited with ${code}. stderr:\n${stderr}`);
+  assertEquals(stderr, "", "Expected no stderr output from CLI help.");
+  assertStringIncludes(stdout, "materialize-base");
+  assertStringIncludes(stdout, "--vault");
+});
 
 Deno.test("CLI renders expected markdown for the demo vault", async () => {
   const { code, stdout, stderr } = await runCli("test-vault/simple.base");
@@ -233,11 +246,8 @@ Deno.test("CLI renders secondary meeting diagnostics view", async () => {
   assertTableEquals(table, expected, { sortRows: true });
 });
 
-Deno.test("CLI uses the working directory when --vault-path is omitted", async () => {
-  const { code, stdout, stderr } = await runCli("unnamed-view.base", {
-    omitVaultPath: true,
-    cwd: testVaultDir,
-  });
+Deno.test("CLI infers the vault path from the base file location", async () => {
+  const { code, stdout, stderr } = await runCli("test-vault/unnamed-view.base");
 
   assertEquals(code, 0, `CLI exited with ${code}. stderr:\n${stderr}`);
   assertEquals(stderr, "", "Expected no stderr output from CLI run.");
@@ -268,6 +278,17 @@ Deno.test("CLI renders placeholder table when no columns are defined", async () 
 
   const table = extractTableLines(stdout, "Empty Output");
   assertEquals(table, expected);
+});
+
+Deno.test("CLI fails when vault path cannot be determined", async () => {
+  const { code, stdout, stderr } = await runCli("fixtures/outside-vault.base");
+
+  assertEquals(code, 1, "Expected CLI to exit with failure.");
+  assertEquals(stdout, "", "Expected no stdout output on failure.");
+  assertStringIncludes(
+    stderr,
+    "Unable to determine vault path.",
+  );
 });
 
 Deno.test("CLI evaluates today() global function", async () => {
@@ -340,6 +361,61 @@ Deno.test("CLI evaluates all documented global functions", async () => {
   assertEquals(rowCells[11], "icon(arrow-right)");
   assertEquals(rowCells[12], "daily, journal");
   assertEquals(rowCells[13], "reflective");
+});
+
+Deno.test("CLI evaluates regex formulas with matches()", async () => {
+  const { code, stdout, stderr } = await runCli(
+    "test-vault/regex.base",
+    { view: "Regex Formulas" },
+  );
+
+  assertEquals(code, 0, `CLI exited with ${code}. stderr:\n${stderr}`);
+  assertEquals(stderr, "", "Expected no stderr output from CLI run.");
+
+  const expected = [
+    '| Project | Matches "alpha" (case-insensitive) | Owner ends with "ie" |',
+    "| --- | --- | --- |",
+    "| Project Alpha Launch | true | true |",
+    "| Project Beta Support | false | false |",
+    "| Research Gamma Exploration | false | false |",
+  ];
+
+  const table = extractTableLines(stdout, "Regex Formulas");
+  assertTableEquals(table, expected, { sortRows: true });
+});
+
+Deno.test("CLI filters rows using regex literals", async () => {
+  const { code, stdout, stderr } = await runCli(
+    "test-vault/regex.base",
+    { view: "Regex Filter" },
+  );
+
+  assertEquals(code, 0, `CLI exited with ${code}. stderr:\n${stderr}`);
+  assertEquals(stderr, "", "Expected no stderr output from CLI run.");
+
+  const expected = [
+    '| Project | Matches "alpha" (case-insensitive) | Owner ends with "ie" |',
+    "| --- | --- | --- |",
+    "| Project Beta Support | false | false |",
+  ];
+
+  const table = extractTableLines(stdout, "Regex Filter");
+  assertTableEquals(table, expected);
+});
+
+Deno.test("CLI reports invalid regex errors", async () => {
+  const { code, stdout, stderr } = await runCli(
+    "test-vault/invalid-regex.base",
+    { view: "Invalid Regex View" },
+  );
+
+  assertEquals(code, 1, "Expected CLI to exit with failure.");
+  assertEquals(stdout, "", "Expected no stdout output on failure.");
+  assertStringIncludes(
+    stderr,
+    'Failed to process view "Invalid Regex View" filters',
+  );
+  assertStringIncludes(stderr, "Invalid regular expression");
 });
 
 Deno.test("CLI fails when base file cannot be read", async () => {
