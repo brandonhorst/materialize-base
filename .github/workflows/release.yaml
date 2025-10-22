@@ -1,0 +1,152 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.goos }} ${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - x86_64-apple-darwin
+          - aarch64-apple-darwin
+          - x86_64-pc-windows-msvc
+        include:
+          - target: x86_64-unknown-linux-gnu
+            goos: linux
+            arch: x64
+            binary_ext: ""
+          - target: aarch64-unknown-linux-gnu
+            goos: linux
+            arch: arm64
+            binary_ext: ""
+          - target: x86_64-apple-darwin
+            goos: darwin
+            arch: x64
+            binary_ext: ""
+          - target: aarch64-apple-darwin
+            goos: darwin
+            arch: arm64
+            binary_ext: ""
+          - target: x86_64-pc-windows-msvc
+            goos: windows
+            arch: x64
+            binary_ext: ".exe"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v1
+        with:
+          deno-version: "v2.x"
+
+      - name: Check versions
+        run: deno --version
+
+      - name: Run checks & tests
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          deno task check
+          deno task test
+
+      - name: Compile binary
+        env:
+          TARGET: ${{ matrix.target }}
+          BINARY_EXT: ${{ matrix.binary_ext }}
+        run: |
+          set -euo pipefail
+          mkdir -p out/bin
+          deno compile --allow-read --target "$TARGET" --output "out/bin/materialize-base" module.ts
+          if [ "$BINARY_EXT" = ".exe" ] && [ ! -f "out/bin/materialize-base.exe" ]; then
+            mv "out/bin/materialize-base" "out/bin/materialize-base.exe"
+          fi
+
+      - name: Package release assets
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          ARCH: ${{ matrix.arch }}
+          BINARY_EXT: ${{ matrix.binary_ext }}
+        run: |
+          set -euo pipefail
+          APP_NAME="materialize-base"
+          VERSION="${GITHUB_REF_NAME}"
+
+          # Check that required docs exist
+          test -f README.md || (echo "❌ README.md missing" && exit 1)
+          ls LICENSE.md >/dev/null 2>&1 || (echo "❌ LICENSE file missing" && exit 1)
+
+          mkdir -p release_out
+          BIN_PATH="out/bin/${APP_NAME}${BINARY_EXT}"
+
+          echo "✔ Found binary: ${BIN_PATH}"
+          test -f "${BIN_PATH}" || (echo "❌ Binary not found" && exit 1)
+
+          rm -rf out/skill
+          mkdir -p out/skill/scripts
+          cp vendor/SKILL.md out/skill
+          cp "${BIN_PATH}" out/skill/scripts/
+
+          BIN_ARCHIVE="${APP_NAME}_${VERSION}_${GOOS}_${ARCH}"
+          SKILL_ARCHIVE="skill_${APP_NAME}_${VERSION}_${GOOS}_${ARCH}"
+
+          # Package binary + docs
+          if [ "$GOOS" = "windows" ]; then
+            zip -j "${BIN_ARCHIVE}.zip" "${BIN_PATH}" README.md LICENSE.md
+            (cd out && zip -r "../${SKILL_ARCHIVE}.zip" "skill")
+          else
+            tar czf "${BIN_ARCHIVE}.tar.gz" "${BIN_PATH}" README.md LICENSE.md
+            tar czf "${SKILL_ARCHIVE}.tar.gz" -C out skill
+          fi
+
+          mkdir -p release_out
+          mv *.zip *.tar.gz release_out/ 2>/dev/null || true
+
+          (cd release_out && sha256sum * > SHA256SUMS.txt || shasum -a 256 * > SHA256SUMS.txt)
+
+      - name: Upload CI artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.target }}
+          path: release_out/*
+
+  release:
+    name: Create GitHub Release
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all_builds
+
+      - name: Gather all builds
+        run: |
+          mkdir -p out
+          find all_builds -type f -exec cp {} out/ \;
+          (cd out && sha256sum * > SHA256SUMS-all.txt || shasum -a 256 * > SHA256SUMS-all.txt)
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          files: |
+            out/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
