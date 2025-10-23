@@ -13,10 +13,7 @@ export async function resolveVaultPath(
     return explicitVaultPath;
   }
 
-  console.error("CWD", Deno.cwd());
-  console.error("Base Path", basePath);
   const inferredVaultPath = await getAncestorVaultPath(basePath);
-  console.error("Inferred Vault Path", inferredVaultPath);
   if (inferredVaultPath) {
     return inferredVaultPath;
   }
