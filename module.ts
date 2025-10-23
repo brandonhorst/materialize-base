@@ -13,7 +13,9 @@ export async function resolveVaultPath(
     return explicitVaultPath;
   }
 
+  console.log("Base Path", basePath);
   const inferredVaultPath = await getAncestorVaultPath(basePath);
+  console.log("Inferred Vault Path", basePath);
   if (inferredVaultPath) {
     return inferredVaultPath;
   }
